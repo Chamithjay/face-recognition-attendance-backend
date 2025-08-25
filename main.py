@@ -1,21 +1,12 @@
 from fastapi import FastAPI
-from database import SessionLocal
+from database import engine, Base
+from vector_db import pc  # Ensure Pinecone client is initialized
 
 app = FastAPI()
 
-
-def get_db():
-    """
-    Dependency to get a SQLAlchemy database session.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
+Base.metadata.create_all(bind=engine)
+print("Database tables created successfully!")
 
 @app.get("/")
 def root():
-    return {"message": "Hello, FastAPI is working!"}
+    return {"message": "Face Recognition Attendance System API is running!"}
