@@ -18,7 +18,7 @@ try:
         print(f"Creating Pinecone index '{INDEX_NAME}'...")
         pc.create_index(
             name=INDEX_NAME,
-            dimension=128,  
+            dimension=512,  
             metric="cosine",
             spec=ServerlessSpec(
                 cloud='aws',

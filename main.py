@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from database import engine, Base
 from vector_db import pc  
 from routers.student_router import router as student_router
-from routers.face_recognition_router import router as face_recognition_router
-from routers.class_router import router as class_router
+from routers.attendance_router import router as attendance_router
+
 
 app = FastAPI()
 
@@ -11,8 +11,8 @@ Base.metadata.create_all(bind=engine)
 print("Database tables created successfully!")
 
 app.include_router(student_router)
-app.include_router(face_recognition_router)
-app.include_router(class_router)
+app.include_router(attendance_router)
+
 
 
 @app.get("/")

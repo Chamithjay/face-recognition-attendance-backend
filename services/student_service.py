@@ -44,7 +44,7 @@ def get_face_embeddings(frames):
     for i, frame in enumerate(frames):
         try:
             print(f"Processing frame {i+1}/{len(frames)}")
-            result = DeepFace.represent(frame, model_name="Facenet", enforce_detection=True)
+            result = DeepFace.represent(frame, model_name="ArcFace", enforce_detection=True)
             if isinstance(result, list) and len(result) > 0 and "embedding" in result[0]:
                 embeddings.append(np.array(result[0]["embedding"]))
                 successful_detections += 1
@@ -58,21 +58,28 @@ def get_face_embeddings(frames):
 
 def save_embeddings_to_pinecone(student_id, embeddings):
     """
-    Save embeddings to Pinecone
+    Save average embedding to Pinecone
     """
     if index is None:
         print("Pinecone not available, skipping embedding storage")
         return
-        
-    vectors = []
-    for emb in embeddings:
-        vector_id = str(uuid.uuid4())
-        vectors.append({
-            "id": vector_id,
-            "values": emb.tolist(),
-            "metadata": {"student_id": student_id}
-        })
-    index.upsert(vectors)
+    
+    if len(embeddings) == 0:
+        print("No embeddings to save")
+        return
+
+    average_embedding = np.mean(embeddings, axis=0)
+    print(f"Calculated average embedding from {len(embeddings)} individual embeddings")
+
+    vector_id = str(uuid.uuid4())
+    vector = {
+        "id": vector_id,
+        "values": average_embedding.tolist(),
+        "metadata": {"student_id": student_id}
+    }
+    
+    index.upsert([vector])
+    print(f"Saved average embedding for student {student_id} to Pinecone")
 
 def register_student(db: Session, student_id: str, name: str, email: str, video_path: str):
     """
@@ -81,12 +88,12 @@ def register_student(db: Session, student_id: str, name: str, email: str, video_
     try:
         print(f"Starting student registration for: {student_id}")
         
-        # Check if student_id already exists
+
         existing_student = db.query(Student).filter(Student.student_id == student_id).first()
         if existing_student:
             raise ValueError(f"Student with ID '{student_id}' already exists")
         
-        # Check if email already exists
+
         existing_email = db.query(Student).filter(Student.email == email).first()
         if existing_email:
             raise ValueError(f"Student with email '{email}' already exists")
@@ -136,7 +143,7 @@ def delete_student(db: Session, student_id: str):
         if not student:
             raise ValueError(f"Student with ID '{student_id}' not found")
         
-        student_db_id = student.id
+        student_db_id = student.student_id
         print(f"Found student: {student.name} (DB ID: {student_db_id})")
         
         # Delete embeddings from Pinecone
@@ -145,7 +152,7 @@ def delete_student(db: Session, student_id: str):
                 print("Deleting embeddings from Pinecone...")
                 # Query Pinecone to find all vectors for this student
                 query_response = index.query(
-                    vector=[0] * 128,  # Dummy vector for metadata filtering
+                    vector=[0] * 512,  # Dummy vector for metadata filtering (ArcFace 512-dim)
                     filter={"student_id": student_db_id},
                     top_k=1000,  # Get all matches
                     include_metadata=True
