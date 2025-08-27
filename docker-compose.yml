@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: face_attendance_postgres
+    environment:
+      POSTGRES_DB: face_attendance
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  backend:
+    build: .
+    container_name: face_attendance_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - /tmp:/tmp
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TF_CPP_MIN_LOG_LEVEL=2
+      - OPENCV_VIDEOIO_PRIORITY_MSMF=0
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/face_attendance
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - postgres
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
