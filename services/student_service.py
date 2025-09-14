@@ -1,10 +1,12 @@
 import uuid
 import cv2
 import numpy as np
+import os
 from deepface import DeepFace
 from sqlalchemy.orm import Session
 from models.models import Student
 from vector_db import index
+
 
 def extract_frames_from_video(video_path, frame_skip=10):
     """
@@ -36,24 +38,100 @@ def extract_frames_from_video(video_path, frame_skip=10):
 
 def get_face_embeddings(frames):
     """
-    Generate embeddings from frames
+    Generate embeddings from frames using retinaface detector
     """
     embeddings = []
     successful_detections = 0
     
     for i, frame in enumerate(frames):
         try:
-            print(f"Processing frame {i+1}/{len(frames)}")
-            result = DeepFace.represent(frame, model_name="ArcFace", enforce_detection=True)
+            # Handle tuple frames from cv2.VideoCapture.read() which returns (ret, frame)
+            if isinstance(frame, tuple):
+                if len(frame) == 2:
+                    ret, actual_frame = frame
+                    if ret and isinstance(actual_frame, np.ndarray):
+                        frame = actual_frame
+                    else:
+                        continue
+                else:
+                    continue
+            
+            # Ensure frame is numpy array
+            if not isinstance(frame, np.ndarray):
+                continue
+                
+            # Ensure frame has correct shape and dtype
+            if len(frame.shape) != 3 or frame.shape[2] != 3:
+                continue
+                
+            # Ensure uint8 dtype
+            if frame.dtype != np.uint8:
+                if frame.max() <= 1.0:
+                    frame = (frame * 255).astype(np.uint8)
+                else:
+                    frame = frame.astype(np.uint8)
+            
+            # Ensure frame is contiguous in memory for DeepFace
+            frame = np.ascontiguousarray(frame)
+            
+            # Try RetinaFace first, fallback to MTCNN
+            import uuid
+            temp_filename = f"temp_frame_{uuid.uuid4().hex[:8]}_{i}.jpg"
+            try:
+                success = cv2.imwrite(temp_filename, frame)
+                if not success:
+                    continue
+                
+                result = None
+                
+                # Try RetinaFace with resized image (known to work better)
+                try:
+                    h, w = frame.shape[:2]
+                    max_dim = 800
+                    if max(h, w) > max_dim:
+                        if h > w:
+                            new_h = max_dim
+                            new_w = int(w * (max_dim / h))
+                        else:
+                            new_w = max_dim
+                            new_h = int(h * (max_dim / w))
+                        resized_frame = cv2.resize(frame, (new_w, new_h))
+                        cv2.imwrite(temp_filename, resized_frame)
+                    
+                    result = DeepFace.represent(
+                        img_path=temp_filename, 
+                        model_name="ArcFace", 
+                        detector_backend="retinaface", 
+                        enforce_detection=False
+                    )
+                    
+                except Exception:
+                    # Fallback to MTCNN
+                    cv2.imwrite(temp_filename, frame)  # Use original frame
+                    result = DeepFace.represent(
+                        img_path=temp_filename, 
+                        model_name="ArcFace", 
+                        detector_backend="mtcnn", 
+                        enforce_detection=False
+                    )
+                
+                # Clean up temp file
+                if os.path.exists(temp_filename):
+                    os.remove(temp_filename)
+                    
+            except Exception as temp_error:
+                # Clean up temp file if it exists
+                if os.path.exists(temp_filename):
+                    os.remove(temp_filename)
+                raise temp_error
+            
             if isinstance(result, list) and len(result) > 0 and "embedding" in result[0]:
                 embeddings.append(np.array(result[0]["embedding"]))
                 successful_detections += 1
-                print(f"Successfully extracted face embedding from frame {i+1}")
-        except Exception as e:
-            print(f"Failed to process frame {i+1}: {str(e)}")
+                
+        except Exception:
             continue
     
-    print(f"Successfully processed {successful_detections} faces from {len(frames)} frames")
     return embeddings
 
 def save_embeddings_to_pinecone(student_id, embeddings):
@@ -88,12 +166,10 @@ def register_student(db: Session, student_id: str, name: str, email: str, video_
     try:
         print(f"Starting student registration for: {student_id}")
         
-
         existing_student = db.query(Student).filter(Student.student_id == student_id).first()
         if existing_student:
             raise ValueError(f"Student with ID '{student_id}' already exists")
         
-
         existing_email = db.query(Student).filter(Student.email == email).first()
         if existing_email:
             raise ValueError(f"Student with email '{email}' already exists")
@@ -127,7 +203,6 @@ def register_student(db: Session, student_id: str, name: str, email: str, video_
         
     except Exception as e:
         print(f"Error in register_student: {str(e)}")
-        # Rollback database changes if something goes wrong
         db.rollback()
         raise e
 
@@ -138,7 +213,6 @@ def delete_student(db: Session, student_id: str):
     try:
         print(f"Starting student deletion for: {student_id}")
         
-        # Find the student
         student = db.query(Student).filter(Student.student_id == student_id).first()
         if not student:
             raise ValueError(f"Student with ID '{student_id}' not found")
@@ -146,15 +220,13 @@ def delete_student(db: Session, student_id: str):
         student_db_id = student.student_id
         print(f"Found student: {student.name} (DB ID: {student_db_id})")
         
-        # Delete embeddings from Pinecone
         if index is not None:
             try:
                 print("Deleting embeddings from Pinecone...")
-                # Query Pinecone to find all vectors for this student
                 query_response = index.query(
-                    vector=[0] * 512,  # Dummy vector for metadata filtering (ArcFace 512-dim)
+                    vector=[0] * 512,
                     filter={"student_id": student_db_id},
-                    top_k=1000,  # Get all matches
+                    top_k=1000,
                     include_metadata=True
                 )
                 
@@ -170,7 +242,6 @@ def delete_student(db: Session, student_id: str):
         else:
             print("Pinecone not available, skipping embedding deletion")
         
-        # Delete student from PostgreSQL
         print("Deleting student from database...")
         db.delete(student)
         db.commit()
