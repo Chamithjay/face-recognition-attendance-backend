@@ -8,6 +8,8 @@ from models.models import Student
 from vector_db import index
 
 
+MAX_EMBEDDINGS_PER_STUDENT = 20
+
 def extract_frames_from_video(video_path, frame_skip=10):
     """
     Extract frames from video
@@ -134,30 +136,37 @@ def get_face_embeddings(frames):
     
     return embeddings
 
+
 def save_embeddings_to_pinecone(student_id, embeddings):
     """
-    Save average embedding to Pinecone
+    Save multiple embeddings to Pinecone, limit to MAX_EMBEDDINGS_PER_STUDENT.
     """
-    if index is None:
-        print("Pinecone not available, skipping embedding storage")
-        return
-    
-    if len(embeddings) == 0:
-        print("No embeddings to save")
+    if index is None or len(embeddings) == 0:
+        print("No embeddings or Pinecone not available")
         return
 
-    average_embedding = np.mean(embeddings, axis=0)
-    print(f"Calculated average embedding from {len(embeddings)} individual embeddings")
+    # Normalize embeddings
+    embeddings = [emb / np.linalg.norm(emb) for emb in embeddings]
 
-    vector_id = str(uuid.uuid4())
-    vector = {
-        "id": vector_id,
-        "values": average_embedding.tolist(),
-        "metadata": {"student_id": student_id}
-    }
-    
-    index.upsert([vector])
-    print(f"Saved average embedding for student {student_id} to Pinecone")
+    # Limit to max N embeddings
+    if len(embeddings) > MAX_EMBEDDINGS_PER_STUDENT:
+        # Pick evenly spaced embeddings from list
+        indices = np.linspace(0, len(embeddings)-1, MAX_EMBEDDINGS_PER_STUDENT, dtype=int)
+        embeddings = [embeddings[i] for i in indices]
+
+    # Upsert each embedding to Pinecone
+    vectors_to_upsert = []
+    for emb in embeddings:
+        vector_id = str(uuid.uuid4())
+        vectors_to_upsert.append({
+            "id": vector_id,
+            "values": emb.tolist(),
+            "metadata": {"student_id": student_id}
+        })
+
+    index.upsert(vectors_to_upsert)
+    print(f"Saved {len(embeddings)} embeddings for student {student_id} to Pinecone")
+
 
 def register_student(db: Session, student_id: str, name: str, email: str, video_path: str):
     """
