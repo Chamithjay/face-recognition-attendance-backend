@@ -12,6 +12,13 @@ from vector_db import index
 from models.models import Student
 from database import SessionLocal
 
+try:
+    ARCFACE_MODEL = DeepFace.build_model("ArcFace")
+    print("ArcFace model loaded successfully.")
+except Exception as e:
+    print("Error loading ArcFace model:", e)
+    ARCFACE_MODEL = None
+
 
 # ------------------------------
 # Pinecone query helper
@@ -139,22 +146,24 @@ async def process_and_stream_video(ws, video_path: str, frame_skip: int = 2, top
                                         db.close()
 
                             # Draw rectangle & label on frame
-                            if isinstance(box, dict) and {"x", "y", "w", "h"}.issubset(box.keys()):
-                                x, y, w, h = int(box["x"]), int(box["y"]), int(box["w"]), int(box["h"])
-                                cv2.rectangle(frame_for_send, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                                cv2.putText(frame_for_send, name, (x, max(0, y - 6)),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-                                box_out = {"x": x, "y": y, "w": w, "h": h}
+                            if student_id:  # Only draw recognized faces
+                                if isinstance(box, dict) and {"x", "y", "w", "h"}.issubset(box.keys()):
+                                    x, y, w, h = int(box["x"]), int(box["y"]), int(box["w"]), int(box["h"])
+                                    cv2.rectangle(frame_for_send, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                                    cv2.putText(frame_for_send, name, (x, max(0, y - 6)),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                                    box_out = {"x": x, "y": y, "w": w, "h": h}
                             else:
                                 box_out = {}
 
-                            detections_out.append({
-                                "student_id": student_id,
-                                "name": name,
-                                "box": box_out,
-                                "score": score
-                            })
+                            # Only append detections if recognized
+                            if student_id:
+                                detections_out.append({
+                                    "student_id": student_id,
+                                    "name": name,
+                                    "box": box_out,
+                                    "score": score
+                                })
 
                         frame_b64 = encode_frame_to_base64_jpg(frame_for_send)
                         await ws.send_json({
