@@ -32,7 +32,14 @@ except Exception as e:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
 def get_db():
+    """
+    Dependency function to get database session for FastAPI endpoints.
+    
+    Yields:
+        Database session that auto-closes after request
+    """
     db = SessionLocal()
     try:
         yield db

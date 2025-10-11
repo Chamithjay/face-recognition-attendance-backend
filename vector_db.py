@@ -1,21 +1,22 @@
+"""
+Pinecone vector database initialization and configuration.
+Handles face embedding storage and similarity search.
+"""
+
 from pinecone import Pinecone, ServerlessSpec
 import os
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 
-
 pc = None
 index = None
 
 try:
-
     pc = Pinecone(api_key=PINECONE_API_KEY)
     
-
     existing_indexes = [index_info['name'] for index_info in pc.list_indexes()]
     if INDEX_NAME not in existing_indexes:
-        print(f"Creating Pinecone index '{INDEX_NAME}'...")
         pc.create_index(
             name=INDEX_NAME,
             dimension=512,  
@@ -26,7 +27,6 @@ try:
             )
         )
     
-
     index = pc.Index(INDEX_NAME)
     print("Pinecone client initialized successfully")
     

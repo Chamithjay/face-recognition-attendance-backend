@@ -1,3 +1,20 @@
+"""
+Student registration and management service.
+Handles video frame extraction, face emb            if isinstance(frame, np.ndarray):
+                frame = np.ascontiguousarray(frame)
+            
+            import uuid
+            temp_filename = f"temp_frame_{uuid.uuid4().hex[:8]}_{i}.jpg"
+            try:
+                success = cv2.imwrite(temp_filename, frame)
+                if not success:
+                    continue
+                
+                result = None
+                
+                try:on, and database operations.
+"""
+
 import uuid
 import cv2
 import numpy as np
@@ -10,9 +27,17 @@ from vector_db import index
 
 MAX_EMBEDDINGS_PER_STUDENT = 20
 
+
 def extract_frames_from_video(video_path, frame_skip=10):
     """
-    Extract frames from video
+    Extract frames from video file at specified intervals.
+    
+    Args:
+        video_path: Path to video file
+        frame_skip: Extract every Nth frame (default: 10)
+        
+    Returns:
+        List of extracted frames as numpy arrays
     """
     try:
         print(f"Opening video file: {video_path}")
@@ -38,16 +63,22 @@ def extract_frames_from_video(video_path, frame_skip=10):
         print(f"Error extracting frames: {str(e)}")
         raise e
 
+
 def get_face_embeddings(frames):
     """
-    Generate embeddings from frames using retinaface detector
+    Generate face embeddings from video frames using ArcFace model.
+    Uses RetinaFace detector with MTCNN fallback.
+    
+    Args:
+        frames: List of video frames as numpy arrays
+        
+    Returns:
+        List of normalized face embeddings
     """
     embeddings = []
-    successful_detections = 0
     
     for i, frame in enumerate(frames):
         try:
-            # Handle tuple frames from cv2.VideoCapture.read() which returns (ret, frame)
             if isinstance(frame, tuple):
                 if len(frame) == 2:
                     ret, actual_frame = frame
@@ -108,8 +139,7 @@ def get_face_embeddings(frames):
                     )
                     
                 except Exception:
-                    # Fallback to MTCNN
-                    cv2.imwrite(temp_filename, frame)  # Use original frame
+                    cv2.imwrite(temp_filename, frame)
                     result = DeepFace.represent(
                         img_path=temp_filename, 
                         model_name="ArcFace", 
@@ -117,19 +147,16 @@ def get_face_embeddings(frames):
                         enforce_detection=False
                     )
                 
-                # Clean up temp file
                 if os.path.exists(temp_filename):
                     os.remove(temp_filename)
                     
             except Exception as temp_error:
-                # Clean up temp file if it exists
                 if os.path.exists(temp_filename):
                     os.remove(temp_filename)
                 raise temp_error
             
             if isinstance(result, list) and len(result) > 0 and "embedding" in result[0]:
                 embeddings.append(np.array(result[0]["embedding"]))
-                successful_detections += 1
                 
         except Exception:
             continue
@@ -139,22 +166,23 @@ def get_face_embeddings(frames):
 
 def save_embeddings_to_pinecone(student_id, embeddings):
     """
-    Save multiple embeddings to Pinecone, limit to MAX_EMBEDDINGS_PER_STUDENT.
+    Save face embeddings to Pinecone vector database.
+    Normalizes embeddings and limits storage to MAX_EMBEDDINGS_PER_STUDENT.
+    
+    Args:
+        student_id: Unique identifier for the student
+        embeddings: List of face embedding vectors
     """
     if index is None or len(embeddings) == 0:
         print("No embeddings or Pinecone not available")
         return
 
-    # Normalize embeddings
     embeddings = [emb / np.linalg.norm(emb) for emb in embeddings]
 
-    # Limit to max N embeddings
     if len(embeddings) > MAX_EMBEDDINGS_PER_STUDENT:
-        # Pick evenly spaced embeddings from list
         indices = np.linspace(0, len(embeddings)-1, MAX_EMBEDDINGS_PER_STUDENT, dtype=int)
         embeddings = [embeddings[i] for i in indices]
 
-    # Upsert each embedding to Pinecone
     vectors_to_upsert = []
     for emb in embeddings:
         vector_id = str(uuid.uuid4())
@@ -170,7 +198,18 @@ def save_embeddings_to_pinecone(student_id, embeddings):
 
 def register_student(db: Session, student_id: str, name: str, email: str, video_path: str):
     """
-    Register student in PostgreSQL and Pinecone
+    Register a new student with face embeddings.
+    Extracts frames from video, generates embeddings, and stores in database.
+    
+    Args:
+        db: Database session
+        student_id: Unique student identifier
+        name: Student's full name
+        email: Student's email address
+        video_path: Path to registration video file
+        
+    Returns:
+        Created Student object
     """
     try:
         print(f"Starting student registration for: {student_id}")
@@ -215,9 +254,17 @@ def register_student(db: Session, student_id: str, name: str, email: str, video_
         db.rollback()
         raise e
 
+
 def delete_student(db: Session, student_id: str):
     """
-    Delete a student and their associated embeddings from both PostgreSQL and Pinecone
+    Delete student and associated face embeddings from database and Pinecone.
+    
+    Args:
+        db: Database session
+        student_id: Unique identifier of student to delete
+        
+    Returns:
+        Success message dictionary
     """
     try:
         print(f"Starting student deletion for: {student_id}")
@@ -263,9 +310,16 @@ def delete_student(db: Session, student_id: str):
         db.rollback()
         raise e
 
+
 def get_all_students(db: Session):
     """
-    Get all students from the database
+    Retrieve all registered students from database.
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        List of Student objects
     """
     try:
         students = db.query(Student).all()
@@ -274,9 +328,17 @@ def get_all_students(db: Session):
         print(f"Error getting students: {str(e)}")
         raise e
 
+
 def get_student_by_id(db: Session, student_id: str):
     """
-    Get a specific student by student_id
+    Retrieve specific student by their unique identifier.
+    
+    Args:
+        db: Database session
+        student_id: Unique student identifier
+        
+    Returns:
+        Student object if found
     """
     try:
         student = db.query(Student).filter(Student.student_id == student_id).first()

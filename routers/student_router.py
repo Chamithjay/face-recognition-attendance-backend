@@ -1,3 +1,7 @@
+"""
+Student management endpoints for registration, deletion, and retrieval.
+"""
+
 from fastapi import APIRouter, UploadFile, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
 from services.student_service import register_student, delete_student, get_all_students, get_student_by_id
@@ -6,6 +10,7 @@ import os
 import traceback
 
 router = APIRouter(prefix="/students", tags=["Students"])
+
 
 @router.post("/register")
 async def register_student_route(
@@ -16,7 +21,17 @@ async def register_student_route(
     db: Session = Depends(get_db)
 ):
     """
-    Register a new student with video embeddings
+    Register new student with face embeddings from video.
+    
+    Args:
+        student_id: Unique student identifier
+        name: Student's full name
+        email: Student's email address
+        video: Registration video containing student's face
+        db: Database session
+        
+    Returns:
+        Success message with student details
     """
     video_path = None
     try:
@@ -25,7 +40,6 @@ async def register_student_route(
         if not video:
             raise HTTPException(status_code=400, detail="Video file is required")
         
-        # Save uploaded video to temporary file
         video_path = f"temp_{video.filename}"
         print(f"Saving video to: {video_path}")
         
@@ -35,7 +49,6 @@ async def register_student_route(
         
         print(f"Video saved successfully, size: {len(content)} bytes")
         
-        # Register student
         student = register_student(db, student_id, name, email, video_path)
         
         print(f"Student registered successfully: {student.student_id}")
@@ -53,7 +66,6 @@ async def register_student_route(
         print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to register student: {str(e)}")
     finally:
-        # Clean up temporary video file
         if video_path and os.path.exists(video_path):
             try:
                 os.remove(video_path)
@@ -67,12 +79,18 @@ async def delete_student_route(
     db: Session = Depends(get_db)
 ):
     """
-    Delete a student and their associated embeddings
+    Delete student and all associated face embeddings.
+    
+    Args:
+        student_id: Unique identifier of student to delete
+        db: Database session
+        
+    Returns:
+        Success message
     """
     try:
         print(f"Deleting student: {student_id}")
         
-        # Delete student
         result = delete_student(db, student_id)
         
         print(f"Student deleted successfully: {student_id}")
@@ -86,10 +104,17 @@ async def delete_student_route(
         print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to delete student: {str(e)}")
 
+
 @router.get("/")
 async def get_students_route(db: Session = Depends(get_db)):
     """
-    Get all students
+    Retrieve list of all registered students.
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Dictionary with students array and count
     """
     try:
         students = get_all_students(db)
@@ -110,13 +135,21 @@ async def get_students_route(db: Session = Depends(get_db)):
         print(f"Error getting students: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get students: {str(e)}")
 
+
 @router.get("/{student_id}")
 async def get_student_route(
     student_id: str,
     db: Session = Depends(get_db)
 ):
     """
-    Get a specific student by student_id
+    Retrieve specific student details by ID.
+    
+    Args:
+        student_id: Unique identifier of student
+        db: Database session
+        
+    Returns:
+        Student details dictionary
     """
     try:
         student = get_student_by_id(db, student_id)

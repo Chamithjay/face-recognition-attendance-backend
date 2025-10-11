@@ -1,3 +1,8 @@
+"""
+Real-time attendance processing service with GPU-accelerated face recognition.
+Handles video streaming, face detection, and student identification.
+"""
+
 import cv2
 import base64
 import os
@@ -10,27 +15,31 @@ from vector_db import index
 from models.models import Student
 from database import SessionLocal
 
-# ------------------------------
-# GPU check
-# ------------------------------
+
 gpus = tf.config.list_physical_devices("GPU")
 if not gpus:
     raise RuntimeError("GPU not detected. This service only supports GPU execution.")
 print(f"✅ GPU detected: {gpus}")
 
-# ------------------------------
-# Preload ArcFace Model
-# ------------------------------
 try:
     ARCFACE_MODEL = DeepFace.build_model("ArcFace")
     print("✅ ArcFace model loaded successfully on GPU")
 except Exception as e:
     raise RuntimeError(f"Failed to load ArcFace model: {e}")
 
-# ------------------------------
-# Pinecone query helper
-# ------------------------------
+
 def pinecone_query(embedding: list, top_k: int = 1, threshold: float = 0.5):
+    """
+    Query Pinecone vector database for matching face embeddings.
+    
+    Args:
+        embedding: Face embedding vector to search for
+        top_k: Number of top matches to return
+        threshold: Minimum similarity score threshold
+        
+    Returns:
+        Query response with matching vectors or None if no matches
+    """
     if index is None:
         return None
     try:
@@ -50,33 +59,41 @@ def pinecone_query(embedding: list, top_k: int = 1, threshold: float = 0.5):
         print("Pinecone query error:", e)
         return None
 
-# ------------------------------
-# Frame encoder
-# ------------------------------
+
 def encode_frame_to_base64_jpg(frame: np.ndarray) -> str:
+    """
+    Encode video frame to base64 JPEG string for transmission.
+    
+    Args:
+        frame: Video frame as numpy array
+        
+    Returns:
+        Base64-encoded JPEG string
+    """
     ret, buffer = cv2.imencode(".jpg", frame)
     if not ret:
         raise RuntimeError("Failed to encode frame")
     return base64.b64encode(buffer.tobytes()).decode("utf-8")
 
-# ------------------------------
-# GPU batch embedding function - OPTIMIZED (in-memory processing)
-# ------------------------------
+
 def get_embeddings_from_frame(frames):
     """
-    Process frames directly in memory using numpy arrays.
-    No disk I/O - massive performance improvement!
+    Extract face embeddings from video frames using ArcFace model.
+    Processes frames in memory without disk I/O for optimal performance.
+    
+    Args:
+        frames: List of video frames as numpy arrays
+        
+    Returns:
+        List of embeddings for each frame, with facial area coordinates
     """
     try:
-        # DeepFace.represent accepts numpy arrays directly
-        # Process frames in batch for GPU efficiency
         all_embeddings = []
         
         for frame in frames:
             try:
-                # Pass numpy array directly - no temp files!
                 faces = DeepFace.represent(
-                    img_path=frame,  # numpy array supported!
+                    img_path=frame,
                     model_name="ArcFace",
                     detector_backend="retinaface",
                     enforce_detection=False
@@ -105,10 +122,19 @@ def get_embeddings_from_frame(frames):
         print("Batch embedding error:", e)
         return [[] for _ in frames]
 
-# ------------------------------
-# Async GPU queue video processor with dynamic batch sizing
-# ------------------------------
+
 async def process_and_stream_video(ws, video_path: str, frame_skip: int = 2, max_batch_size: int = 16, top_k: int = 1):
+    """
+    Process video and stream results via WebSocket with GPU-accelerated face recognition.
+    Uses dynamic batch sizing based on available GPU memory.
+    
+    Args:
+        ws: WebSocket connection for streaming results
+        video_path: Path to video file to process
+        frame_skip: Process every Nth frame (default: 2)
+        max_batch_size: Maximum frames to process in parallel (default: 16)
+        top_k: Number of top matches to return per face (default: 1)
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         await ws.send_json({"error": f"Cannot open video at path: {video_path}"})
@@ -121,9 +147,6 @@ async def process_and_stream_video(ws, video_path: str, frame_skip: int = 2, max
     frame_queue = asyncio.Queue(maxsize=2*max_batch_size)
     stop_flag = False
 
-    # ------------------------------
-    # Reader coroutine
-    # ------------------------------
     async def reader():
         nonlocal frame_idx, stop_flag
         try:
@@ -137,12 +160,8 @@ async def process_and_stream_video(ws, video_path: str, frame_skip: int = 2, max
         finally:
             stop_flag = True
 
-    # ------------------------------
-    # Processor coroutine with dynamic batch sizing
-    # ------------------------------
     async def processor():
         while not stop_flag or not frame_queue.empty():
-            # Estimate batch size based on GPU memory
             gpu = tf.config.experimental.get_memory_info("GPU:0")
             available_mem = gpu['current'] if 'current' in gpu else 1024*1024*1024
             batch_size = max(1, min(max_batch_size, int(available_mem // (50*1024*1024))))
@@ -165,7 +184,6 @@ async def process_and_stream_video(ws, video_path: str, frame_skip: int = 2, max
                     box = emb_info.get("facial_area", {})
                     name, student_id, score = "Unknown", None, None
 
-                    # Pinecone lookup
                     response = pinecone_query(emb.tolist(), top_k=top_k, threshold=0.5)
                     if response and len(response.matches) > 0:
                         best_match = response.matches[0]
@@ -180,11 +198,10 @@ async def process_and_stream_video(ws, video_path: str, frame_skip: int = 2, max
                             finally:
                                 db.close()
 
-                    # Draw recognized faces
                     if student_id and isinstance(box, dict) and {"x","y","w","h"}.issubset(box.keys()):
                         x,y,w,h = int(box["x"]), int(box["y"]), int(box["w"]), int(box["h"])
                         cv2.rectangle(frame_for_send, (x,y), (x+w,y+h), (0,255,0), 2)
-                        cv2.putText(frame_for_send, name, (x, max(0,y-6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255),2)
+                        cv2.putText(frame_for_send, name, (x, max(0,y-6)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255),2)
                         detections_out.append({
                             "student_id": student_id,
                             "name": name,
@@ -200,9 +217,6 @@ async def process_and_stream_video(ws, video_path: str, frame_skip: int = 2, max
                 })
                 await asyncio.sleep(delay_seconds)
 
-    # ------------------------------
-    # Run concurrently
-    # ------------------------------
     await asyncio.gather(reader(), processor())
 
     cap.release()
